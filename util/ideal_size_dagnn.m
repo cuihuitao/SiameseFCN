@@ -10,7 +10,14 @@ end
 end
 
 function n = forward_dagnn(net, n)
+    pre_l = [];
     for i = 1:numel(net.layers)
+        if i>=2
+           % judge the layer is or not the child of the previous layer
+           if ~ismember(pre_l.outputs, net.layers(i).inputs)
+               continue;
+           end
+        end
         l = net.layers(i).block;
         switch class(l)
             case 'dagnn.Conv'
@@ -23,12 +30,21 @@ function n = forward_dagnn(net, n)
                 m = l.poolSize;
                 k = l.stride(1);                
                 n = filter(n, pad, m, k);
-        end
+        end        
+        layer_name = net.layers(i).name;
+        pre_l = net.layers(i);
     end
 end
 
 function n = backward_dagnn(net, n)
+    aft_l = [];
     for i = numel(net.layers):-1:1
+        if i<numel(net.layers)
+           % judge the layer is or not the child of the previous layer
+           if ~ismember(net.layers(i).outputs, aft_l.inputs)
+               continue;
+           end
+        end
         l = net.layers(i).block;
         switch class(l)
             case 'dagnn.Conv'
@@ -42,6 +58,8 @@ function n = backward_dagnn(net, n)
                 k = l.stride(1); 
                 n = unfilter(n, pad, m, k);
         end
+        layer_name = net.layers(i).name;
+        aft_l = net.layers(i);
     end
 end
 

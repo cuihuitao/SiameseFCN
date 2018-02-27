@@ -19,10 +19,14 @@ switch opts.branch.type
         [branch1, branch2] = make_branches_matvggm5(opts);
     case 'matvggf5'
         [branch1, branch2] = make_branches_matvggf5(opts);
+    case 'matvggs5'
+        [branch1, branch2] = make_branches_matvggs5(opts);
     case 'matvgg16'
         [branch1, branch2] = make_branches_matvgg16(opts);
     case 'darknet19'
         [branch1, branch2] = make_branches_darknet19(opts);
+    case 'airnet'
+        [branch1, branch2] = make_branches_airnet(opts);
     otherwise
         error('Unknown branch type')
 end
@@ -115,6 +119,17 @@ function [branch1, branch2] = make_branches_matvggf5(opts)
     branch2 = f();   
 end
 
+function [branch1, branch2] = make_branches_matvggs5(opts)
+    branch_opts.last_layer = 'conv5_conv';   
+    branch_opts = vl_argparse(branch_opts, {opts.branch.conf});
+    branch_opts.exemplarSize = opts.exemplarSize * [1 1];
+    branch_opts.instanceSize = opts.instanceSize * [1 1];
+    
+    f = @() make_branch_matvggs5(branch_opts);
+    branch1 = f();
+    branch2 = f();   
+end
+
 function [branch1, branch2] = make_branches_matvgg16(opts)
     branch_opts.last_layer = 'conv5_3_conv';   
     branch_opts = vl_argparse(branch_opts, {opts.branch.conf});
@@ -133,6 +148,17 @@ function [branch1, branch2] = make_branches_darknet19(opts)
     branch_opts.instanceSize = opts.instanceSize * [1 1];
     
     f = @() make_branch_darknet19(branch_opts);
+    branch1 = f();
+    branch2 = f();   
+end
+
+function [branch1, branch2] = make_branches_airnet(opts)
+    branch_opts.last_layer = 'conv5b';   
+    branch_opts = vl_argparse(branch_opts, {opts.branch.conf});
+    branch_opts.exemplarSize = opts.exemplarSize * [1 1];
+    branch_opts.instanceSize = opts.instanceSize * [1 1];
+    
+    f = @() make_branch_airnet(branch_opts);
     branch1 = f();
     branch2 = f();   
 end
