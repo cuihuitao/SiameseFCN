@@ -309,15 +309,15 @@ function [imout_z, imout_x, labels, pos_label_coors, sizes_z, sizes_x] = vid_get
 
 %         % test        
         %close all
-        figure(i*2-1), imshow(imout_z(:,:,:,i)/255); hold on
-        rect_z = [bbox_z(1) bbox_z(2) bbox_z(3) bbox_z(4)];
-        figure(i*2-1), rectangle('Position',rect_z, 'LineWidth',2','EdgeColor','y'); hold off
-        fprintf('\n%d:    %.2f  %.2f', i, bbox_z(4), bbox_z(3));
-        
-        figure(i*2), imshow(imout_x(:,:,:,i)/255); hold on
-        rect_x = [bbox_x(1) bbox_x(2) bbox_x(3) bbox_x(4)];
-        figure(i*2), rectangle('Position',rect_x, 'LineWidth',2','EdgeColor','y'); hold off
-        fprintf('\n%d:    %.2f  %.2f', i, bbox_x(4), bbox_x(3));
+%         figure(i*2-1), imshow(imout_z(:,:,:,i)/255); hold on
+%         rect_z = [bbox_z(1) bbox_z(2) bbox_z(3) bbox_z(4)];
+%         figure(i*2-1), rectangle('Position',rect_z, 'LineWidth',2','EdgeColor','y'); hold off
+%         fprintf('\n%d:    %.2f  %.2f', i, bbox_z(4), bbox_z(3));
+%         
+%         figure(i*2), imshow(imout_x(:,:,:,i)/255); hold on
+%         rect_x = [bbox_x(1) bbox_x(2) bbox_x(3) bbox_x(4)];
+%         figure(i*2), rectangle('Position',rect_x, 'LineWidth',2','EdgeColor','y'); hold off
+%         fprintf('\n%d:    %.2f  %.2f', i, bbox_x(4), bbox_x(3));
               
     end
 end
