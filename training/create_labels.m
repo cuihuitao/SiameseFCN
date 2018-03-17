@@ -1,10 +1,10 @@
-function [posLabel, negLabel, posWeight, negWeight] = create_labels(posLabelSize, labelWeight, rPos, rNeg)
+function [posLabel, negLabel, posWeight, negWeight] = create_labels(posLabelSize, labelWeight, rPos, rNeg, label_origin)
     assert(mod(posLabelSize(1),2)==1)
     half = floor(posLabelSize(1)/2)+1;
     switch labelWeight
         case 'balanced'
             % weight by class size (+/-)
-            posLabel = create_logisticloss_label(posLabelSize, rPos, rNeg);
+            posLabel = create_logisticloss_label(posLabelSize, rPos, rNeg, label_origin);
             negLabel = -1 * ones(posLabelSize(1));
             posWeight = ones(size(posLabel));
             sumP = numel(find(posLabel==1));

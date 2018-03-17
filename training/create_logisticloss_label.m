@@ -1,8 +1,8 @@
-function logloss_label = create_logisticloss_label(label_size, rPos, rNeg)
+function logloss_label = create_logisticloss_label(label_size, rPos, rNeg, label_origin)
     % contruct label for logistic loss (same for all pairs)
     label_side = label_size(1);
     logloss_label = single(zeros(label_side));
-    label_origin = [ceil(label_side/2) ceil(label_side/2)];
+    %label_origin = [ceil(label_side/2) ceil(label_side/2)];
     for i=1:label_side
         for j=1:label_side
             dist_from_origin = dist([i j], label_origin');

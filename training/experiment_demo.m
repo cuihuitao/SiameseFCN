@@ -113,7 +113,8 @@ function [net, stats] = experiment_demo(imdb_video, varargin)
                'augment', opts.augment, ...
                'addAugment', opts.addAugment, ...
                'prefetch', opts.train.prefetch, ...
-               'numThreads', opts.numFetchThreads), ...
+               'numThreads', opts.numFetchThreads, ...
+               'resp_stride', resp_stride), ...
         label_inputs_fn, ...
         opts.join.method);
 
@@ -208,13 +209,14 @@ function [net, derOutputs, inputs_fn] = setup_loss(net, resp_sz, resp_stride, cr
                          LogisticLoss(), ...
                          {'score', 'eltwise_label', 'eltwise_weight'}, 'objective');
             % adding weights to loss layer
+            label_origin = [ceil(resp_sz(1)/2) ceil(resp_sz(1)/2)];
             [pos_eltwise, neg_eltwise, pos_weight, neg_weight] = create_labels(...
                 resp_sz, loss_opts.labelWeight, ...
-                loss_opts.rPos/resp_stride, loss_opts.rNeg/resp_stride);
+                loss_opts.rPos/resp_stride, loss_opts.rNeg/resp_stride, label_origin);
 
             derOutputs = {'objective', 1};
-            inputs_fn = @(labels, obj_sz_z, obj_sz_x) get_label_inputs_simple(...
-                labels, obj_sz_z, obj_sz_x, pos_eltwise, neg_eltwise, pos_weight, neg_weight);
+            inputs_fn = @(labels, obj_sz_z, obj_sz_x, pos_label_coors) get_label_inputs_simple(...
+                labels, obj_sz_z, obj_sz_x, pos_eltwise, neg_eltwise, pos_weight, neg_weight, pos_label_coors, resp_stride, loss_opts);
 
         otherwise
             error('Unknown loss')
@@ -233,7 +235,7 @@ function [net, derOutputs, inputs_fn] = setup_loss(net, resp_sz, resp_stride, cr
 end
 
 % -------------------------------------------------------------------------------------------------
-function inputs = get_label_inputs_simple(labels, obj_sz_z, obj_sz_x, pos_eltwise, neg_eltwise, wp_eltwise, wn_eltwise)
+function inputs = get_label_inputs_simple(labels, obj_sz_z, obj_sz_x, pos_eltwise, neg_eltwise, wp_eltwise, wn_eltwise, pos_label_coors, resp_stride, loss_opts)
 % -------------------------------------------------------------------------------------------------
     pos = (labels > 0);
     neg = (labels < 0);
@@ -245,6 +247,21 @@ function inputs = get_label_inputs_simple(labels, obj_sz_z, obj_sz_x, pos_eltwis
     eltwise_weights = zeros([resp_sz, 1, numel(labels)], 'single');
     eltwise_weights(:,:,:,pos) = repmat(wp_eltwise, [1 1 1 sum(pos)]);
     eltwise_weights(:,:,:,neg) = repmat(wn_eltwise, [1 1 1 sum(neg)]);
+    
+    % change the pos labels
+    for i = 1:length(pos)
+        if pos(i) == 1
+            label_origin = [pos_label_coors(2, i) pos_label_coors(1, i)];
+            if ~isequal(label_origin, [ceil(resp_sz(1)/2) ceil(resp_sz(1)/2)])
+                [pos_eltwise, neg_eltwise, wp_eltwise, wn_eltwise] = create_labels(...
+                        resp_sz, loss_opts.labelWeight, ...
+                        loss_opts.rPos/resp_stride, loss_opts.rNeg/resp_stride, label_origin);
+                eltwise_labels(:,:,:,i) = pos_eltwise;
+                eltwise_weights(:,:,:,i) = wp_eltwise;
+            end
+        end
+    end
+    
     inputs = {'label', labels, ...
               'eltwise_label', eltwise_labels, ...
               'eltwise_weight', eltwise_weights, ...
@@ -281,6 +298,10 @@ function [imdb_video, imdb] = choose_val_set(imdb_video, opts)
     if opts.setVALtoTRAIN
         imdb_video.set(size_training+1:end) = TRAIN_SET;  % here we enforce all folders to be TRAIN_SET
     end
+    
+    % for test move label 
+    imdb_video.set(1:end) = VAL_SET;
+    imdb_video.set(1:10) = TRAIN_SET;
        
     nt = sum(imdb_video.set==TRAIN_SET);
     nv = sum(imdb_video.set==VAL_SET);
@@ -295,6 +316,7 @@ function [imdb_video, imdb] = choose_val_set(imdb_video, opts)
     imdb.images.set = uint8(zeros(1, num_pairs));
     imdb.images.set(1:num_pairs_train) = TRAIN_SET;
     imdb.images.set(num_pairs_train+1:end) = VAL_SET;
+    
 end
 
 
@@ -303,13 +325,13 @@ function inputs = get_batch(db, batch, imdb_video, data_dir, use_gpu, sample_opt
 % Returns the inputs to the network.
 % -------------------------------------------------------------------------------------------------
 
-    [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(...
+    [imout_z, imout_x, labels, pos_label_coors, sizes_z, sizes_x] = vid_get_random_batch(...
         db, imdb_video, batch, data_dir, sample_opts);
     if use_gpu
         imout_z = gpuArray(imout_z);
         imout_x = gpuArray(imout_x);
     end
     % Constructs full label inputs from output of vid_get_random_batch.
-    label_inputs = label_inputs_fn(labels, sizes_z, sizes_x);
+    label_inputs = label_inputs_fn(labels, sizes_z, sizes_x, pos_label_coors);
     inputs = [{'exemplar', imout_z, 'instance', imout_x}, label_inputs];
 end

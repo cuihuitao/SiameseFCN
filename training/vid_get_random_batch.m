@@ -1,5 +1,5 @@
 % -----------------------------------------------------------------------------------------------------------------------
-function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imdb, imdb_video, batch, data_dir, varargin)
+function [imout_z, imout_x, labels, pos_label_coors, sizes_z, sizes_x] = vid_get_random_batch(imdb, imdb_video, batch, data_dir, varargin)
 % Return batch of pairs of input (z and x) and labels
 % (Sizes are returned as [height, width])
 % -----------------------------------------------------------------------------------------------------------------------
@@ -43,6 +43,8 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
     
     opts.prefetch = false;
     opts.numThreads = 12;
+    opts.resp_stride = 4;  % used for creating labels
+
     opts = vl_argparse(opts, varargin);
 % -----------------------------------------------------------------------------------------------------------------------
     % Determine the set (e.g. train or val) of the batch.
@@ -89,12 +91,18 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
     % crops locations
     crops_z_string = cell(1, batch_size);
     crops_x_string = cell(1, batch_size);
+    % move locations
+    cmoves_z_string = cell(1, batch_size);
+    cmoves_x_string = cell(1, batch_size);
+    cmoves_z = zeros(2, batch_size);
+    cmoves_x = zeros(2, batch_size);
     labels = zeros(1, batch_size);
     % final augmented crops
     imout_z = zeros(opts.exemplarSize, opts.exemplarSize, 3, batch_size, 'single');
     imout_x = zeros(opts.instanceSize, opts.instanceSize, 3, batch_size, 'single');
 
     neg = 0;
+    %fprintf('\nBegin test ...\n');
     for i = 1:batch_size
         switch pair_types_neg(i)
         % Crops from same videos, centered on the object
@@ -114,7 +122,8 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
             error('invalid pair type');
         end
     end
-
+    %fprintf('End test ...\n');
+    
     % get absolute paths of crops locations
     for i=1:batch_size
         % NOTE: doing the experiments for CVPR'17 we realized that using the large 255x255 crops and then extracting the inner 127x127 during training
@@ -124,10 +133,54 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
         else
             crops_z_string{i} = [strrep(fullfile(data_dir, objects.z{i}.frame_path), '.JPEG','') '.' num2str(objects.z{i}.track_id, '%02d') '.crop.x.jpg'];
         end
+        cmoves_z_string{i} = strrep(crops_z_string{i}, '.crop.x.jpg', '.pad.x.txt');
         
-        crops_x_string{i} = [strrep(fullfile(data_dir, objects.x{i}.frame_path), '.JPEG','') '.' num2str(objects.x{i}.track_id, '%02d') '.crop.x.jpg'];
+        crops_x_string{i} = [strrep(fullfile(data_dir, objects.x{i}.frame_path), '.JPEG','') '.' num2str(objects.x{i}.track_id, '%02d') '.crop.x.jpg'];     
+        cmoves_x_string{i} = strrep(crops_x_string{i}, '.crop.x.jpg', '.pad.x.txt');
+        
+        % for test imdb_video_demo.mat
+        if contains(crops_z_string{i}, '_train_')
+            crops_z_string{i} = strrep(crops_z_string{i}, 'trainval', 'train');           
+            cmoves_z_string{i} = strrep(crops_z_string{i}, '.crop.x.jpg', '.pad.x.txt');
+        else
+            crops_z_string{i} = strrep(crops_z_string{i}, 'trainval', 'val');
+            % linux
+            %crops_z_string{i} = strrep(crops_z_string{i}, 'ILSVRC2015_VID_val_0000/', '');
+            % windows
+            crops_z_string{i} = strrep(crops_z_string{i}, 'ILSVRC2015_VID_val_0000\', '');
+            cmoves_z_string{i} = strrep(crops_z_string{i}, '.crop.x.jpg', '.pad.x.txt');
+        end
+        if contains(crops_x_string{i}, '_train_')
+            crops_x_string{i} = strrep(crops_x_string{i}, 'trainval', 'train');           
+            cmoves_x_string{i} = strrep(crops_x_string{i}, '.crop.x.jpg', '.pad.x.txt');       
+        else
+            crops_x_string{i} = strrep(crops_x_string{i}, 'trainval', 'val');
+            % linux
+            % crops_x_string{i} = strrep(crops_x_string{i}, 'ILSVRC2015_VID_val_0000/', '');
+            % windows
+            crops_x_string{i} = strrep(crops_x_string{i}, 'ILSVRC2015_VID_val_0000\', '');
+            cmoves_x_string{i} = strrep(crops_x_string{i}, '.crop.x.jpg', '.pad.x.txt');
+        end       
+    end
+    
+    % get all the cmove 
+    for i=1:batch_size
+        % get the move coordinaries for crop_z (used in aquire_augment)
+        cmove_z_file = fopen(cmoves_z_string{i});
+        cmove_z_info = textscan(cmove_z_file, '%d %d %d %d %f %f', 'Delimiter', ',');
+        fclose(cmove_z_file);
+        cmoves_z(1, i) = cmove_z_info{5};
+        cmoves_z(2, i) = cmove_z_info{6};
+        
+        % get the move coordinaries for crop_x (used in function out)
+        cmove_x_file = fopen(cmoves_x_string{i});
+        cmove_x_info = textscan(cmove_x_file, '%d %d %d %d %f %f', 'Delimiter', ',');
+        fclose(cmove_x_file);
+        cmoves_x(1, i) = cmove_x_info{5};
+        cmoves_x(2, i) = cmove_x_info{6};
         
     end
+               
     % prepare all the files to read
     files = [crops_z_string crops_x_string];
 
@@ -160,8 +213,8 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
         add_aug_opts = struct();
     end
 
-    aug_z = @(crop, add_aug_opts) acquire_augment(crop, opts.exemplarSize, opts.stats.rgbVariance_z, aug_opts, add_aug_opts);
-    aug_x = @(crop, add_aug_opts) acquire_augment(crop, opts.instanceSize, opts.stats.rgbVariance_x, aug_opts, add_aug_opts);
+    aug_z = @(crop, add_aug_opts, cmove_z) acquire_augment(crop, opts.exemplarSize, opts.stats.rgbVariance_z, aug_opts, add_aug_opts, cmove_z);
+    aug_x = @(crop, add_aug_opts, cmove_x) acquire_augment(crop, opts.instanceSize, opts.stats.rgbVariance_x, aug_opts, add_aug_opts, cmove_x);
 
     for i=1:batch_size
         switch pair_types_aug(i)
@@ -173,18 +226,18 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
         if batch_set == VAL_SET
             add_aug_opts.flag = 0;
         end
-        tmp_x = aug_x(crops_x{i}, add_aug_opts);
+        tmp_x = aug_x(crops_x{i}, add_aug_opts, []);
         % here we don not add extra augmentattion for exemplar
         add_aug_opts.flag = 0;
         switch pair_types_neg(i)
             case {POS_PAIR, EASY_NEG_PAIR}
-                tmp_z = aug_z(crops_z{i}, add_aug_opts);
+                tmp_z = aug_z(crops_z{i}, add_aug_opts, cmoves_z(:,i));
             case HARD_NEG_PAIR
                 % For the hard negative pairs the exemplar has to be extracted from corners of corresponding search area.
                 rand_pos = randi(size(opts.hardneg.pos,1));
                 p = opts.hardneg.pos(rand_pos, :);
                 neg_z = crops_z{i}(p(1):p(2), p(3):p(4), :);
-                tmp_z = aug_z(neg_z, add_aug_opts);
+                tmp_z = aug_z(neg_z, add_aug_opts, cmoves_z(:,i));
                 % test
                 %figure(1), imshow(crops_x{i}/255)
                 %figure(2), imshow(crops_z{i}/255)
@@ -207,6 +260,7 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
                 %imout_x(:,:,:,i) = imout_x(:,:,:,i);
             case INV
                 prob = rand(1);
+                %fprintf('inverse prob: %d\n', prob);
                 if prob<=opts.augment.invprob
                     imout_z(:,:,:,i) = 255-imout_z(:,:,:,i);
                 else
@@ -235,6 +289,7 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
 
     sizes_z = zeros(2, batch_size);
     sizes_x = zeros(2, batch_size);
+    pos_label_coors = -1*ones(2, batch_size);
     for i = 1:batch_size
         if ~(labels(i) > 0)
             continue
@@ -243,20 +298,27 @@ function [imout_z, imout_x, labels, sizes_z, sizes_x] = vid_get_random_batch(imd
         % compute bounding boxes of objects within crops x and z
         switch(opts.augment.input_method)
             case 'crop'
-                [bbox_z, bbox_x] = get_objects_extent_crop(double(objects.z{i}.extent), double(objects.x{i}.extent), opts.exemplarSize, opts.instanceSize);
+                [bbox_z, bbox_x] = get_objects_extent_crop(double(objects.z{i}.extent), double(objects.x{i}.extent), opts.exemplarSize, opts.instanceSize, cmoves_z(:, i), cmoves_x(:, i));
             case 'resize'
-                [bbox_z, bbox_x] = get_objects_extent_resize(double(objects.z{i}.extent), double(objects.x{i}.extent), opts.exemplarSize, opts.instanceSize);
+                [bbox_z, bbox_x] = get_objects_extent_resize(double(objects.z{i}.extent), double(objects.x{i}.extent), opts.exemplarSize, opts.instanceSize, cmoves_z(:, i), cmoves_x(:, i));
         end
         % only store h and w
         sizes_z(:,i) = bbox_z([4 3]);
         sizes_x(:,i) = bbox_x([4 3]);
+        pos_label_coors(:, i) = get_pos_label_coors(bbox_z, bbox_x, opts.resp_stride);
 
-%         % test
-%         close all
-%         figure(i), imshow(imout_x(:,:,:,i)/255); hold on
-%         rect_x = [255/2-bbox_x(3)/2 255/2-bbox_x(4)/2 bbox_x(3) bbox_x(4)];
-%         figure(i), rectangle('Position',rect_x, 'LineWidth',2','EdgeColor','y'); hold off
-%         fprintf('\n%d:    %.2f  %.2f', i, bbox_x(4), bbox_x(3));
+%         % test        
+        %close all
+        figure(i*2-1), imshow(imout_z(:,:,:,i)/255); hold on
+        rect_z = [bbox_z(1) bbox_z(2) bbox_z(3) bbox_z(4)];
+        figure(i*2-1), rectangle('Position',rect_z, 'LineWidth',2','EdgeColor','y'); hold off
+        fprintf('\n%d:    %.2f  %.2f', i, bbox_z(4), bbox_z(3));
+        
+        figure(i*2), imshow(imout_x(:,:,:,i)/255); hold on
+        rect_x = [bbox_x(1) bbox_x(2) bbox_x(3) bbox_x(4)];
+        figure(i*2), rectangle('Position',rect_x, 'LineWidth',2','EdgeColor','y'); hold off
+        fprintf('\n%d:    %.2f  %.2f', i, bbox_x(4), bbox_x(3));
+              
     end
 end
 
@@ -278,8 +340,13 @@ function [z, x] = choose_pos_pair(imdb_video, rand_vid, frameRange)
     assert(~isempty(possible_x), 'No valid x for the chosen z.');
     rand_x = datasample(possible_x, 1);
     assert(imdb_video.objects{rand_vid}{rand_x}.valid, 'error picking rand x.');
+%     % test movel label
+%     rand_z = 2;
+%     rand_x = 22;
     z = imdb_video.objects{rand_vid}{rand_z};
     x = imdb_video.objects{rand_vid}{rand_x};
+    %fprintf('exemplar crop from frame %d in video %d\n', rand_z, rand_vid);
+    %fprintf('instance crop from frame %d in video %d\n', rand_x, rand_vid);
 end
 
 
@@ -299,6 +366,8 @@ function [z, x] = choose_easy_neg_pair(imdb_video, rand_vid, rand_neg_vid)
     rand_trackid_x = datasample(valid_trackids_x, 1);
     rand_x = datasample(imdb_video.valid_per_trackid{rand_trackid_x, rand_neg_vid}, 1);
     x = imdb_video.objects{rand_neg_vid}{rand_x};
+    %fprintf('exemplar crop from frame %d in video %d\n', rand_z, rand_vid);
+    %fprintf('exemplar crop from frame %d in video %d\n', rand_x, rand_neg_vid);
 end
 
 
@@ -334,7 +403,7 @@ function [z, x] = choose_hard_neg_pair(imdb_video, ids_set, dist_neg)
 end
 
 % -----------------------------------------------------------------------------------------------------------------------
-function imo = acquire_augment(im, imageSize, rgbVariance, aug_opts, add_aug_opts)
+function imo = acquire_augment(im, imageSize, rgbVariance, aug_opts, add_aug_opts, cmove)
 % Apply transformations and augmentations to original crops
 % -----------------------------------------------------------------------------------------------------------------------
     if numel(imageSize) == 1
@@ -353,7 +422,13 @@ function imo = acquire_augment(im, imageSize, rgbVariance, aug_opts, add_aug_opt
     h = size(imt,1) ;
     cx = (w+1)/2;
     cy = (h+1)/2;
-
+    
+    % get the move coordinaries
+    if ~isequal(cmove, [])
+        cx = cx + cmove(1);
+        cy = cy + cmove(2);
+    end
+    
     if aug_opts.stretch
         scale = (1+aug_opts.maxStretch*(-1+2*rand(2,1)));
         sz = round(min(imageSize(1:2)' .* scale, [h;w]));
@@ -385,8 +460,24 @@ function imo = acquire_augment(im, imageSize, rgbVariance, aug_opts, add_aug_opt
         end
     else
         % Take crop at center.
+        % here we change the center constrain,
+        % which means the center of the object will not always be the
+        % center of the crop image
         dx = cx - (sz(2)-1)/2;
         dy = cy - (sz(1)-1)/2;
+        if dx < 1
+            dx = 1;
+        end
+        if dy < 1
+            dy = 1;
+        end
+        if dx+sz(2)-1 > w
+            dx = w-sz(2)+1;
+        end
+        if dy+sz(1)-1 > h
+            dy = h-sz(1)+1;
+        end
+        % update cmove info
     end
 
     % flip = rand > 0.5 ;
@@ -892,7 +983,7 @@ function imo = gammaAdjust(im, gammaAdjust_opts)
 end
 
 % -----------------------------------------------------------------------------------------------------------------------
-function [bbox_z, bbox_x] = get_objects_extent_crop(object_z_extent, object_x_extent,crop_z, crop_x)
+function [bbox_z, bbox_x] = get_objects_extent_crop(object_z_extent, object_x_extent, crop_z, crop_x, cmove_z, cmove_x)
 % Compute objects bbox within crops
 % bboxes are returned as [xmin, ymin, width, height]
 % -----------------------------------------------------------------------------------------------------------------------
@@ -911,7 +1002,6 @@ function [bbox_z, bbox_x] = get_objects_extent_crop(object_z_extent, object_x_ex
     scale_z = size_z / s_z;
     ws_z = w_z * scale_z;
     hs_z = h_z * scale_z;
-    bbox_z = [(crop_z-ws_z)/2, (crop_z-hs_z)/2, ws_z, hs_z];
 
     % getting in-crop object extent for X
     [w_x, h_x] = deal(object_x_extent(3), object_x_extent(4));
@@ -926,39 +1016,77 @@ function [bbox_z, bbox_x] = get_objects_extent_crop(object_z_extent, object_x_ex
     scale_x = size_x / s_x;
     ws_x = w_x * scale_x;
     hs_x = h_x * scale_x;
-    bbox_x = [(crop_x-ws_x)/2, (crop_x-hs_x)/2, ws_x, hs_x];
+    bbox_x = [(crop_x-ws_x)/2+cmove_x(1), (crop_x-hs_x)/2+cmove_x(2), ws_x, hs_x];
+    
+    bbox_z = [(crop_x-ws_z)/2+cmove_z(1), (crop_x-hs_z)/2+cmove_z(2), ws_z, hs_z];
+    cx = (size_x+1)/2+cmove_z(1);
+    cy = (size_x+1)/2+cmove_z(2);
+    dx = cx - (size_z-1)/2;
+    dy = cy - (size_z-1)/2;
+    if dx < 1
+        dx = 1;
+    end
+    if dy < 1
+        dy = 1;
+    end
+    if dx+size_z-1 > size_x
+        dx = size_x-size_z+1;
+    end
+    if dy+size_z-1 > size_x
+        dy = size_x-size_z+1;
+    end
+    bbox_z = [bbox_z(1)-dx, bbox_z(2)-dy, ws_z, hs_z];
 end
 
 % -----------------------------------------------------------------------------------------------------------------------
-function [bbox_z, bbox_x] = get_objects_extent_resize(object_z_extent, object_x_extent, size_z, size_x)
+function [bbox_z, bbox_x] = get_objects_extent_resize(object_z_extent, object_x_extent, size_z, size_x, cmove_x)
 % Compute objects bbox within crops
 % bboxes are returned as [xmin, ymin, width, height]
 % -----------------------------------------------------------------------------------------------------------------------
     % TODO: this should passed from experiment as default
     context_amount = 0.5;
+    default_z = 127;
+    default_x = 255;
 
     % getting in-crop object extent for Z
     [w_z, h_z] = deal(object_z_extent(3), object_z_extent(4));
     wc_z = w_z + context_amount*(w_z+h_z);
     hc_z = h_z + context_amount*(w_z+h_z);
     s_z = sqrt(wc_z*hc_z);
-    scale_z = size_z / s_z;
+    scale_z = default_z / s_z;
     ws_z = w_z * scale_z;
     hs_z = h_z * scale_z;
-    bbox_z = [(size_z-ws_z)/2, (size_z-hs_z)/2, ws_z, hs_z];
 
     % getting in-crop object extent for X
     [w_x, h_x] = deal(object_x_extent(3), object_x_extent(4));
     wc_x = w_x + context_amount*(w_x+h_x);
     hc_x = h_x + context_amount*(w_x+h_x);
     s_xz = sqrt(wc_x*hc_x);
-    scale_xz = size_z / s_xz;
+    scale_xz = default_x / s_xz;
 
-    d_search = (size_x - size_z)/2;
+    d_search = (default_x - default_z)/2;
     pad = d_search/scale_xz;
     s_x = s_xz + 2*pad;
-    scale_x = size_x / s_x;
+    scale_x = default_x / s_x;
     ws_x = w_x * scale_x;
     hs_x = h_x * scale_x;
-    bbox_x = [(size_x-ws_x)/2, (size_x-hs_x)/2, ws_x, hs_x];
+    bbox_x = [(default_x-ws_x)/2+cmove_x(1), (default_x-hs_x)/2+cmove_x(2), ws_x, hs_x];
+    resize_scale_x = size_x / default_x;
+    bbox_x = bbox_x * resize_scale_x;
+    
+    bbox_z = [(default_x-ws_z)/2+cmove_z(1), (default_x-hs_z)/2+cmove_z(2), ws_z, hs_z];
+    resize_scale_z = size_z / default_x;
+    bbox_z = bbox_z * resize_scale_z;
+end
+
+function label_coor = get_pos_label_coors(bbox_z, bbox_x, resp_stride)
+% Get the ground truth label with bbox_z and bbox_x
+% the center of object in crops_z will be the same as the center of object
+% in the matching area in crops_z
+% Return the coor of the label(33*33)
+
+coor_x = (bbox_x(1) + bbox_x(3)/2) - (bbox_z(1) + bbox_z(3)/2);
+coor_y = (bbox_x(2) + bbox_x(4)/2) - (bbox_z(2) + bbox_z(4)/2);
+label_coor = [round((coor_x-1)/resp_stride)+1 round((coor_y-1)/resp_stride)+1];
+
 end
